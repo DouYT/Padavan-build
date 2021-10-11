@@ -17,7 +17,7 @@ on:
   watch:                                                        # 监视操作
     types: [started]                                            # 点击 Star 之后
 env:
-  src_git: https://github.com/hanwckf/rt-n56u.git
+  src_git: https://github.com/DouYT/rt-n56u.git
   build_dir: /opt/rt-n56u
   images_dir: /opt/images
   ENABLED_CFG: |
