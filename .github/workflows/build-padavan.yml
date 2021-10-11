@@ -17,22 +17,10 @@ on:
   watch:                                                        # 监视操作
     types: [started]                                            # 点击 Star 之后
 env:
-  build_dir: /opt/rt-n56u                                       # 源码目录
-  images_dir: /opt/images                                       # 固件目录
-  work_dir: /opt/rt-n56u/trunk                                  # 工作目录
-  custom_modify: true                                           # 修改文件
-  upload_cowtransfer: true                                      # 上传到奶牛快传
-  upload_wetransfer: true                                       # 上传到 WeTransfer
-  src_git: https://github.com/hanwckf/rt-n56u.git               # 源码地址
-  config_dir: /opt/rt-n56u/trunk/configs/templates              # 设备模板目录
-  toolchain_dir: /opt/rt-n56u/toolchain-mipsel/toolchain-3.4.x  # 工具链目录
-  toolchain_pkg: mipsel-linux-uclibc.tar.xz
-  toolchain_url: https://github.com/TurBoTse/padavan-toolchain/releases/download/v1.0
+  src_git: https://github.com/hanwckf/rt-n56u.git
+  build_dir: /opt/rt-n56u
+  images_dir: /opt/images
   ENABLED_CFG: |
-    CONFIG_FIRMWARE_INCLUDE_LANG_CN
-    CONFIG_FIRMWARE_ENABLE_IPV6
-  DISABLED_CFG: |
-    CONFIG_FIRMWARE_INCLUDE_LANG_UK
     CONFIG_FIRMWARE_INCLUDE_TCPDUMP
     CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT
     CONFIG_FIRMWARE_INCLUDE_GDUT_DRCOM
@@ -45,6 +33,7 @@ env:
     CONFIG_FIRMWARE_INCLUDE_HTOP
     CONFIG_FIRMWARE_INCLUDE_NANO
     CONFIG_FIRMWARE_INCLUDE_MENTOHUST
+  DISABLED_CFG: |
     CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS
     CONFIG_FIRMWARE_INCLUDE_SSSERVER
     CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_SERVER
@@ -54,13 +43,12 @@ env:
     CONFIG_FIRMWARE_INCLUDE_FRPC
     CONFIG_FIRMWARE_INCLUDE_FRPS
     CONFIG_FIRMWARE_INCLUDE_TUNSAFE
-
+    CONFIG_FIRMWARE_INCLUDE_WIREGUARD
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   build:
     name: build
     runs-on: ubuntu-20.04
-    if: github.event.repository.owner.id == github.event.sender.id  # 自己点的 Star
     env:
       build_variant: ${{ matrix.build_variant }}
       targets: ${{ matrix.targets }}
@@ -70,49 +58,54 @@ jobs:
           - build_variant: "mt7621"
             targets: "RM2100 R2100"
     steps:
-      - name: Checkout main            # 导入主分支
-        uses: actions/checkout@v2
-      - name: Prepare environment      # 准备编译环境
-        run: |                         # 安装依赖包
+      - uses: actions/checkout@v2
+      - name: Prepare environment
+        run: |
           sudo apt update
-          sudo apt install libtool-bin gperf python-docutils autopoint gettext
-          sudo timedatectl set-timezone 'Asia/Shanghai'  # 设置时区
-      - name: Clone source code
-        run: |                         # 克隆源码
+          sudo apt install libtool-bin gperf python-docutils autopoint gettext zip
+          mkdir -p $images_dir
+          cp -f ./ReleaseNote.txt $images_dir
+      - name: Clone source
+        run: |
           git clone --depth=1 $src_git $build_dir
+          cd $build_dir
+          GIT_VERSION="$(git rev-parse --short=7 HEAD 2>/dev/null)"
+          build_date="$(date +%Y%m%d)"
+          echo "build_date=${build_date}" >> $GITHUB_ENV
+          echo "image_suffix=${GIT_VERSION}_${build_date}" >> $GITHUB_ENV
+          echo "image_name=images_${build_variant}_${GIT_VERSION}" >> $GITHUB_ENV
+      - name: Run shellcheck
+        run: |
+          cd $build_dir
+          if [ -f ./trunk/tools/shellcheck.sh ]; then sh ./trunk/tools/shellcheck.sh; fi
       - name: Prepare toolchain
-        run: |                         # 下载预编译的构建工具链
-          # cd $build_dir/toolchain-mipsel
-          # sh dl_toolchain.sh
-          mkdir -p $toolchain_dir && mkdir -p $images_dir
-          curl -LO ${toolchain_url}/${toolchain_pkg}
-          tar -xf $toolchain_pkg -C $toolchain_dir
+        run: |
+          cd $build_dir/toolchain-mipsel
+          sh dl_toolchain.sh
       - name: Modify configs
-        run: |                         # 修改配置文件
-          cd $config_dir
+        run: |
+          cd $build_dir/trunk/configs/templates
           for m in $targets; do if [ -f $m.config ]; then \
           for n in $ENABLED_CFG; do sed -i "/${n}/c${n}=y" $m.config; done; \
           for n in $DISABLED_CFG; do sed -i "/${n}/c${n}=n" $m.config; done; \
           fi; done
-      - name: Copy custom modify
-        if: env.custom_modify == 'true'
-        run: |                         # 拷贝文件并修改
-          for m in $targets; do if [ ! -f public/$m.sh ]; then echo "public/$m.sh 未找到"
-          else
-            if [ -f public/$m.sh ]; then cp -f public/$m.sh $work_dir; echo "$m.sh 拷贝成功"; fi; fi; done; \
-          for m in $targets; do  if [ ! -f public/$m.config ]; then echo "public/$m.config 未找到"
-          else
-            if [ -f public/$m.config ]; then cp -f public/$m.config $config_dir/$m.config; echo "$m.config 已修改"; fi; fi; done; \
-          if [ -f public/public.sh ]; then cp -f public/public.sh $work_dir; fi
-          if [ -d hanwckf/config ]; then cp -f hanwckf/config/* $work_dir; fi
-          if [ -d hanwckf/scripts ]; then cp -f hanwckf/scripts/* $work_dir; fi
-          if [ -d hanwckf/modify ]; then cp -rf hanwckf/modify/* $work_dir; fi
-          cd $work_dir
-          for m in $targets; do if [ -f $m.config ]; then echo "拷贝 $m.config"; cp -f ./$m.config $config_dir/$m.config; fi; done; \
-          for m in $targets; do if [ -f public.sh ]; then echo "执行 public.sh"; sh ./public.sh; fi; if [ -f $m.sh ]; then echo "执行 $m.sh"; sh ./$m.sh; fi; done; \
-      - name: Start build firmware
-        run: |                         # 执行构建固件
-          cd $work_dir
+      - name: Start build
+        run: |
+          cd $build_dir/trunk
           for m in $targets; do fakeroot ./build_firmware_ci $m; \
-          if [ $? = 0 ]; then cp -f images/*.trx $images_dir/Hanwckf_${m}_$(date +%Y%m%d).trx; else exit 1; fi; \
+          if [ $? = 0 ]; then cp -f images/*.trx $images_dir/$m.trx; else exit 1; fi; \
           ./clear_tree_simple >/dev/null 2>&1; done
+      - name: Create archive
+        if: ${{ success() }}
+        run: |
+          echo -e "Build Date: ${build_date}\n" >> ${images_dir}/ReleaseNote.txt
+          cd $build_dir && git log -1 |tee -a ${images_dir}/ReleaseNote.txt
+          cd $images_dir
+          for m in $targets; do zip ${m}_${image_suffix}.zip $m.trx ReleaseNote.txt; done
+          7z a -mx=9 ${image_name}.7z *.zip
+      - name: Upload images to Artifact
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v2.2.1
+        with:
+          name: ${{ env.image_name }}
+          path: ${{ env.images_dir }}/${{ env.image_name }}.7z
