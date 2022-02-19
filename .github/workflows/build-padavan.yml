@@ -56,7 +56,7 @@ jobs:
       matrix:
         include:
           - build_variant: "mt7621"
-            targets: "RM2100 R2100"
+            targets: "R2100"
     steps:
       - uses: actions/checkout@v2
       - name: Prepare environment
